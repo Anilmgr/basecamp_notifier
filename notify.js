@@ -14,6 +14,7 @@ const apiClient = axios.create({
 
 async function getProjects() {
     try {
+        const PROJECTS = []
         const response = await apiClient.get("/projects.json");
         if (!response.data || response.data.length === 0) {
             throw new Error("No projects found.");
@@ -26,7 +27,13 @@ async function getProjects() {
             throw new Error("No matching projects found.");
         }
 
-        return clientProjects;
+        clientProjects.forEach((project) => {
+            PROJECTS.push({
+                project_id: project.id,
+                message_board_id: project.dock.filter((dock) => dock.name === "message_board")[0].id,
+            });
+        });        
+        return PROJECTS;
     } catch (error) {
         console.error(
             "Error fetching projects:",
@@ -35,11 +42,10 @@ async function getProjects() {
         throw error;
     }
 }
-// Fetch messages from a Basecamp message board
 async function fetchMessages(project) {
     try {
         const url = `/buckets/${project.project_id}/message_boards/${project.message_board_id}/messages.json`;
-        const response = await apiClient.get(url);
+        const response = await apiClient.get(url);        
         return response.data;
     } catch (error) {
         console.error(`❌ Error fetching messages for Project ${project.project_id}:`, error.response?.status, error.response?.data);
@@ -50,8 +56,8 @@ async function fetchMessages(project) {
 // Fetch comments for a message
 async function fetchComments(projectId, messageId) {
     try {
-        const url = `/buckets/${projectId}/messages/${messageId}/comments.json`;
-        const response = await apiClient.get(url);
+        const url = `/buckets/${projectId}/recordings/${messageId}/comments.json`;
+        const response = await apiClient.get(url);        
         return response.data;
     } catch (error) {
         console.error(`❌ Error fetching comments for Message ${messageId}:`, error.response?.status, error.response?.data);
@@ -76,14 +82,8 @@ function isOldAndUnreplied(content) {
 // Fetch and filter messages & comments from multiple projects
 async function checkClientContent() {
     let unreadItems = [];
-    const PROJECTS = [] 
-    const projects = await getProjects();
-    projects.forEach((project) => {
-        PROJECTS.push({
-            project_id: project.id,
-            message_board_id: project.dock.filter((dock) => dock.name === "message_board")[0].id,
-        });
-    });// Assume this function is defined elsewhere
+    const PROJECTS = await getProjects();
+    
     for (const project of PROJECTS) {
         const messages = await fetchMessages(project);
         for (const msg of messages) {
@@ -94,6 +94,7 @@ async function checkClientContent() {
                     project_id: project.project_id,
                     subject: msg.subject,
                     url: msg.url,
+                    app_url: msg.app_url,
                 });
             }
 
@@ -105,7 +106,8 @@ async function checkClientContent() {
                         type: "Comment",
                         project_id: project.project_id,
                         subject: `Comment on: ${msg.subject}`,
-                        url: msg.url, // Same message URL since comments don't have direct links
+                        url: msg.url,
+                        app_url: comment.app_url,
                     });
                 }
             }
@@ -121,10 +123,11 @@ async function checkClientContent() {
 
 // Send a notification to Basecamp
 async function sendNotification(items) {
+    const PROJECTS = await getProjects();
     const notifyProject = PROJECTS[0]; // Send the notification to the first project's message board
     const notifyUrl = `/buckets/${notifyProject.project_id}/message_boards/${notifyProject.message_board_id}/messages.json`;
 
-    const messageContent = items.map(item => `- **[${item.type}]** [${item.subject}](${item.url}) (Project ID: ${item.project_id})`).join("\n");
+    const messageContent = items.map(item => `- **[${item.type}]** [${item.subject}](${item.app_url}) (Project ID: ${item.project_id})`).join("\n");
 
     const data = {
         subject: "📢 Unread Client Messages & Comments Notification",
@@ -142,3 +145,4 @@ async function sendNotification(items) {
 
 // Run the check
 checkClientContent();
+
