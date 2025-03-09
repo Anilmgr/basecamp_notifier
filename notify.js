@@ -54,13 +54,14 @@ async function fetchMessages(project) {
 }
 
 // Fetch comments for a message
-async function fetchComments(projectId, messageId) {
+async function getLatestComment(projectId, messageId) {
     try {
         const url = `/buckets/${projectId}/recordings/${messageId}/comments.json`;
         const response = await apiClient.get(url);        
-        return response.data;
+        const latestComment = response.data.length > 0 ? response.data[response.data.length - 1] : null;
+        return latestComment;
     } catch (error) {
-        console.error(`❌ Error fetching comments for Message ${messageId}:`, error.response?.status, error.response?.data);
+        console.error(`❌ Error fetching latest comment for Message ${messageId}:`, error.response?.status, error.response?.data);
         return [];
     }
 }
@@ -76,7 +77,7 @@ function isOldAndUnreplied(content) {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    return contentDate < sevenDaysAgo && content.comments_count === 0 && content.boosts_count === 0;
+    return contentDate < sevenDaysAgo && content.comments_count === 0;
 }
 
 // Fetch and filter messages & comments from multiple projects
@@ -99,17 +100,16 @@ async function checkClientContent() {
             }
 
             // Fetch comments for this message
-            const comments = await fetchComments(project.project_id, msg.id);
-            for (const comment of comments) {
-                if (isClientContent(comment) && isOldAndUnreplied(comment)) {
-                    unreadItems.push({
-                        type: "Comment",
-                        project_id: project.project_id,
-                        subject: `Comment on: ${msg.subject}`,
-                        url: msg.url,
-                        app_url: comment.app_url,
-                    });
-                }
+            const lastComment = await getLatestComment(project.project_id, msg.id);
+
+            if (lastComment && isClientContent(lastComment) && isOldAndUnreplied(lastComment)) {
+                unreadItems.push({
+                    type: "Comment",
+                    project_id: project.project_id,
+                    subject: `Comment on: ${msg.subject}`,
+                    url: msg.url,
+                    app_url: comment.app_url,
+                });
             }
         }
     }
