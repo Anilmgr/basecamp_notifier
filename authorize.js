@@ -2,16 +2,16 @@ import "dotenv/config";
 import express from "express";
 import axios from "axios";
 import { saveTokens, getTokens, setupDatabase } from "./db.js";
+import { authorize, refreshToken } from "./api.js";
 
 const app = express();
 
 const client_id = process.env.CLIENT_ID;
 const redirect_uri = process.env.REDIRECT_URI;
-const client_secret = process.env.CLIENT_SECRET;
 const account_id = process.env.ACCOUNT_ID;
 const port = process.env.PORT || 8000;
 
-app.get("/auth", (req, res) => {
+app.get("/", (req, res) => {
     const authUrl = `https://launchpad.37signals.com/authorization/new?client_id=${client_id}&redirect_uri=${encodeURIComponent(
         redirect_uri
     )}&type=web_server`;
@@ -24,19 +24,9 @@ app.get("/callback", async (req, res) => {
         return res.status(400).send("Authorization code not received.");
     }
     try {
-        const tokenResponse = await axios.post(
-            "https://launchpad.37signals.com/authorization/token",
-            {
-                type: "web_server",
-                client_id: client_id,
-                client_secret: client_secret,
-                code: authCode,
-                redirect_uri: redirect_uri,
-            }
-        );
-
-        const accessToken = tokenResponse.data.access_token;
-        const refreshToken = tokenResponse.data.refresh_token;
+        const tokenResponse = await authorize(authCode);
+        const accessToken = tokenResponse.access_token;
+        const refreshToken = tokenResponse.refresh_token;
         await saveTokens(accessToken, refreshToken);
         res.send(
             `<p>Token synced successfully. You can now use the app. </p><a href="/profile">View profile</a>`
@@ -46,28 +36,6 @@ app.get("/callback", async (req, res) => {
         res.status(500).send("Failed to obtain access token.");
     }
 });
-
-const refreshToken = async (refreshToken) => {
-    try {
-        const response = await axios.post(
-            "https://launchpad.37signals.com/authorization/token",
-            {
-                type: "refresh",
-                client_id,
-                client_secret,
-                refresh_token: refreshToken,
-            }
-        );
-        const newAccessToken = response.data.access_token;
-        const newRefreshToken = response.data.refresh_token;
-
-        await saveTokens(newAccessToken, newRefreshToken);
-        return newAccessToken;
-    } catch (error) {
-        console.error("Error refreshing token:", error);
-        throw error; // Propagate the error for handling
-    }
-};
 
 app.get("/profile", async (req, res) => {
     try {

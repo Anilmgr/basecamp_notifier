@@ -1,9 +1,34 @@
-import { getTokens } from "./db.js";
 import axios from "axios";
+import { getTokens, getTokenAge } from "./db.js";
+import { refreshToken } from "./api.js";
 import "dotenv/config.js";
 
 const account_id = process.env.ACCOUNT_ID;
-const { access_token, refresh_token } = await getTokens();
+
+// Fetch initial tokens
+let { access_token, refresh_token } = await getTokens();
+
+/**
+ * Updates the access token if it is older than 7 days.
+ */
+async function updateTokenIfNeeded() {
+    try {
+        const { updated_at } = await getTokenAge();
+        const lastUpdated = new Date(
+            updated_at.includes("T") ? updated_at : updated_at.replace(" ", "T")
+        );
+        const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+        if (Date.now() - lastUpdated.getTime() > sevenDaysMs) {
+            const newAccessToken = await refreshToken(refresh_token);
+            if (newAccessToken) access_token = newAccessToken;
+        }
+    } catch (error) {
+        console.error("Error refreshing token:", error.message);
+    }
+}
+
+await updateTokenIfNeeded();
+
 const apiClient = axios.create({
     baseURL: `https://3.basecampapi.com/${account_id}/`,
     headers: {
@@ -12,137 +37,212 @@ const apiClient = axios.create({
     },
 });
 
+/**
+ * Fetches projects that match the client project naming pattern.
+ */
 async function getProjects() {
     try {
-        const PROJECTS = []
+        const PROJECTS = [];
         const response = await apiClient.get("/projects.json");
-        if (!response.data || response.data.length === 0) {
-            throw new Error("No projects found.");
-        }
-        const clientProjects = response.data.filter((project) =>
+        const projects = response.data || [];
+        const clientProjects = projects.filter((project) =>
             project.name.match(/^K6\d{3}_EXTERNAL.*/i)
         );
-
-        if (clientProjects.length === 0) {
-            throw new Error("No matching projects found.");
-        }
-
-        clientProjects.forEach((project) => {
-            PROJECTS.push({
-                project_id: project.id,
-                message_board_id: project.dock.filter((dock) => dock.name === "message_board")[0].id,
-            });
-        });        
-        return PROJECTS;
+        return clientProjects.map((project) => ({
+            project_id: project.id,
+            message_board_id: project.dock.find(
+                (dock) => dock.name === "message_board"
+            )?.id,
+        }));
     } catch (error) {
         console.error(
-            "Error fetching projects:",
-            error.response?.data || error.message
+            "❌ Error fetching projects:",
+            error.response?.status,
+            error.response?.data
         );
-        throw error;
-    }
-}
-async function fetchMessages(project) {
-    try {
-        const url = `/buckets/${project.project_id}/message_boards/${project.message_board_id}/messages.json`;
-        const response = await apiClient.get(url);        
-        return response.data;
-    } catch (error) {
-        console.error(`❌ Error fetching messages for Project ${project.project_id}:`, error.response?.status, error.response?.data);
         return [];
     }
 }
 
-// Fetch comments for a message
+/**
+ * Fetches messages from a project's message board.
+ */
+async function getMessages(project) {
+    try {
+        const response = await apiClient.get(
+            `/buckets/${project.project_id}/message_boards/${project.message_board_id}/messages.json`
+        );
+        return response.data || [];
+    } catch (error) {
+        console.error(
+            `❌ Error fetching messages for project ${project.project_id}:`,
+            error.message
+        );
+        return [];
+    }
+}
+
+/**
+ * Fetches the latest comment on a message.
+ */
 async function getLatestComment(projectId, messageId) {
     try {
-        const url = `/buckets/${projectId}/recordings/${messageId}/comments.json`;
-        const response = await apiClient.get(url);        
-        const latestComment = response.data.length > 0 ? response.data[response.data.length - 1] : null;
-        return latestComment;
+        const response = await apiClient.get(
+            `/buckets/${projectId}/recordings/${messageId}/comments.json`
+        );
+        return response.data?.slice(-1)[0] || null;
     } catch (error) {
-        console.error(`❌ Error fetching latest comment for Message ${messageId}:`, error.response?.status, error.response?.data);
-        return [];
+        console.error(
+            `❌ Error fetching latest comment for message ${messageId}:`,
+            error.message
+        );
+        return null;
     }
 }
 
-// Check if a message or comment is from a client
+/**
+ * Determines if content was created by a client.
+ */
 function isClientContent(content) {
-    return content.creator?.client === true;
+    return content?.creator?.client === true;
 }
 
-// Check if a message or comment is older than 7 days and has no replies or boosts
-function isOldAndUnreplied(content) {
-    const contentDate = new Date(content.created_at);
+/**
+ * Checks if content is older than 7 days and has no replies (for messages).
+ */
+function isOldAndUnreplied(content, contentType = "message") {
+    return true;
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-    return contentDate < sevenDaysAgo && content.comments_count === 0;
+    return (
+        new Date(content.created_at) < sevenDaysAgo &&
+        (contentType === "message" ? content.comments_count === 0 : true)
+    );
 }
 
-// Fetch and filter messages & comments from multiple projects
+/**
+ * Checks for unread client messages and comments.
+ */
 async function checkClientContent() {
-    let unreadItems = [];
-    const PROJECTS = await getProjects();
-    
-    for (const project of PROJECTS) {
-        const messages = await fetchMessages(project);
-        for (const msg of messages) {
-            // Check if the message itself is from a client and needs attention
-            if (isClientContent(msg) && isOldAndUnreplied(msg)) {
+    const unreadItems = [];
+    const projects = await getProjects();
+    for (const project of projects) {
+        const messages = await getMessages(project);
+        for (const message of messages) {
+            if (isClientContent(message) && isOldAndUnreplied(message)) {
                 unreadItems.push({
                     type: "Message",
                     project_id: project.project_id,
-                    subject: msg.subject,
-                    url: msg.url,
-                    app_url: msg.app_url,
+                    message_board_id: project.message_board_id,
+                    subject: message.subject,
+                    url: message.url,
+                    app_url: message.app_url,
                 });
             }
-
-            // Fetch comments for this message
-            const lastComment = await getLatestComment(project.project_id, msg.id);
-
-            if (lastComment && isClientContent(lastComment) && isOldAndUnreplied(lastComment)) {
+            const lastComment = await getLatestComment(
+                project.project_id,
+                message.id
+            );
+            if (
+                lastComment &&
+                isClientContent(lastComment) &&
+                isOldAndUnreplied(lastComment, "comment")
+            ) {
                 unreadItems.push({
                     type: "Comment",
                     project_id: project.project_id,
-                    subject: `Comment on: ${msg.subject}`,
-                    url: msg.url,
-                    app_url: comment.app_url,
+                    message_board_id: project.message_board_id,
+                    subject: `Comment on: ${message.subject}`,
+                    url: message.url,
+                    app_url: lastComment.app_url,
                 });
             }
         }
     }
+    console.log(
+        `🔍 Found ${unreadItems.length} unread client messages/comments.`
+    );
+    if (unreadItems.length > 0) await sendNotification(unreadItems);
+}
 
-    console.log(`🔍 Found ${unreadItems.length} unread client messages/comments.`);
+/**
+ * Sends notification for unread client messages/comments.
+ */
+async function sendNotification(contents) {
+    const projects = await getProjects();
+    const itemsByProject = contents.reduce((acc, content) => {
+        if (!acc[content.project_id]) {
+            acc[content.project_id] = [];
+        }
+        acc[content.project_id].push(content);
+        return acc;
+    }, {});
+    for (const [projectId, projectItems] of Object.entries(itemsByProject)) {
+        const notifyProject = projects.find(
+            (project) => project.project_id === parseInt(projectId)
+        );
+        if (!notifyProject) continue;
+        const messageContent = projectItems
+            .map(
+                (item, i) =>
+                    `${i + 1}. **[${item.type}]** [${item.subject}](<a href="${
+                        item.app_url
+                    }">Check</a>)`
+            )
+            .join("<br/>");
 
-    if (unreadItems.length > 0) {
-        await sendNotification(unreadItems);
+        try {
+            const response = await apiClient.get(
+                `/buckets/${projectId}/message_boards/${notifyProject.message_board_id}/messages.json`
+            );
+            const existingNotification = response.data.find(
+                (message) =>
+                    message.title.includes(
+                        "Unread Client Messages & Comments Notification"
+                    ) && message.status === "active"
+            );
+
+            if (existingNotification) {
+                console.log(
+                    `📢 Updating existing notification for project ${projectId}...`
+                );
+                await apiClient.post(
+                    `/buckets/${projectId}/recordings/${existingNotification.id}/comments.json`,
+                    {
+                        content: `🚨 Unread client messages/comments older than 7 days:<br/>${messageContent}`,
+                    }
+                );
+            } else {
+                console.log(
+                    `📢 Posting new notification for project ${projectId}...`
+                );
+                const { data: createdMessage } = await apiClient.post(
+                    `/buckets/${projectId}/message_boards/${notifyProject.message_board_id}/messages.json`,
+                    {
+                        subject:
+                            "📢 Unread Client Messages & Comments Notification",
+                        status: "active",
+                        content: "",
+                    }
+                );
+                await apiClient.post(
+                    `/buckets/${projectId}/recordings/${createdMessage.id}/comments.json`,
+                    {
+                        content: `🚨 Unread client messages/comments older than 7 days:<br/>${messageContent}`,
+                    }
+                );
+            }
+            console.log(
+                `✅ Notification updated on Basecamp for project ${projectId}!`
+            );
+        } catch (error) {
+            console.error(
+                `❌ Error posting notification for project ${projectId}:`,
+                error.response?.status,
+                error.response?.data
+            );
+        }
     }
 }
 
-// Send a notification to Basecamp
-async function sendNotification(items) {
-    const PROJECTS = await getProjects();
-    const notifyProject = PROJECTS[0]; // Send the notification to the first project's message board
-    const notifyUrl = `/buckets/${notifyProject.project_id}/message_boards/${notifyProject.message_board_id}/messages.json`;
-
-    const messageContent = items.map(item => `- **[${item.type}]** [${item.subject}](${item.app_url}) (Project ID: ${item.project_id})`).join("\n");
-
-    const data = {
-        subject: "📢 Unread Client Messages & Comments Notification",
-        status: "active",
-        content: `🚨 The following client messages and comments are older than 7 days and need attention:\n\n${messageContent}`,
-    };
-
-    try {
-        await apiClient.post(notifyUrl, data);
-        console.log("✅ Notification posted to Basecamp!");
-    } catch (error) {
-        console.error(`❌ Error posting notification:`, error.response?.status, error.response?.data);
-    }
-}
-
-// Run the check
-checkClientContent();
-
+await checkClientContent();
