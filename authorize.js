@@ -6,11 +6,13 @@ import { authorize, refreshToken } from "./api.js";
 
 const app = express();
 
+// Retrieve client credentials and redirect URI from environment variables
 const client_id = process.env.CLIENT_ID;
 const redirect_uri = process.env.REDIRECT_URI;
 const account_id = process.env.ACCOUNT_ID;
 const port = process.env.PORT || 8000;
 
+// Redirect the user to the OAuth2 provider's authorization page
 app.get("/", (req, res) => {
     const authUrl = `https://launchpad.37signals.com/authorization/new?client_id=${client_id}&redirect_uri=${encodeURIComponent(
         redirect_uri
@@ -18,6 +20,7 @@ app.get("/", (req, res) => {
     res.redirect(authUrl);
 });
 
+// Handle the callback from the OAuth2 provider
 app.get("/callback", async (req, res) => {
     const authCode = req.query.code;
     if (!authCode) {
@@ -37,6 +40,7 @@ app.get("/callback", async (req, res) => {
     }
 });
 
+// Fetch the user's profile using the access token
 app.get("/profile", async (req, res) => {
     try {
         const { access_token, refresh_token } = await getTokens();
@@ -79,6 +83,7 @@ app.get("/profile", async (req, res) => {
     }
 });
 
+// Start the server and setup the database
 const startServer = async () => {
     await setupDatabase();
     app.listen(port, () => {
