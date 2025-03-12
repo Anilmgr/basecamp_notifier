@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import axios from "axios";
 import { saveTokens, getTokens, setupDatabase } from "./db.js";
-import { authorize, refreshToken } from "./api.js";
+import { authorize, refreshToken } from "./oauth.js";
 
 const app = express();
 

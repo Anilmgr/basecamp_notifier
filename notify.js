@@ -1,6 +1,6 @@
 import axios from "axios";
 import { getTokens, getTokenAge } from "./db.js";
-import { refreshToken } from "./api.js";
+import { refreshToken } from "./oauth.js";
 import "dotenv/config.js";
 
 const account_id = process.env.ACCOUNT_ID;
