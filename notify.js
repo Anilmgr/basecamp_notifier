@@ -111,7 +111,6 @@ function isClientContent(content) {
  * Checks if content is older than 7 days and has no replies (for messages).
  */
 function isOldAndUnreplied(content, contentType = "message") {
-    return true;
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     return (
