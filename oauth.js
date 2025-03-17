@@ -40,8 +40,8 @@ export async function refreshToken(refreshToken) {
             refresh_token: refreshToken,
         }
     );    
-    
+        
     const newAccessToken = response.data.access_token;
-    await saveTokens(newAccessToken, 'refresh');
+    await saveTokens(newAccessToken,refreshToken, 'refresh');
     return newAccessToken;
 }
