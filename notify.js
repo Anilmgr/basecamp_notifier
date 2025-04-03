@@ -1,12 +1,17 @@
 /**
  * Basecamp Client Content Notification System
- * 
+ *
  * This script checks for unread client messages and comments in Basecamp projects,
  * and sends notifications for items that haven't been addressed in 7 days.
  */
 
 import axios from "axios";
-import { getTokens, getTokenAge, getNotificationHistory, saveNotificationHistory } from "./db.js";
+import {
+    getTokens,
+    getTokenAge,
+    getNotificationHistory,
+    saveNotificationHistory,
+} from "./db.js";
 import { refreshToken } from "./oauth.js";
 import "dotenv/config";
 
@@ -26,8 +31,10 @@ let { access_token, refresh_token } = await getTokens();
 async function updateTokenIfNeeded() {
     try {
         const { updated_at } = await getTokenAge();
-        const lastUpdated = new Date(updated_at.includes("T") ? updated_at : updated_at.replace(" ", "T"));
-        
+        const lastUpdated = new Date(
+            updated_at.includes("T") ? updated_at : updated_at.replace(" ", "T")
+        );
+
         if (Date.now() - lastUpdated.getTime() > SEVEN_DAYS_MS) {
             const newAccessToken = await refreshToken(refresh_token);
             if (newAccessToken) access_token = newAccessToken;
@@ -53,7 +60,7 @@ const apiClient = axios.create({
  * Fetches projects that match the client project naming pattern.
  * @returns {Array} Array of client projects
  */
-async function getProjects() {
+async function fetchClientProjects() {
     try {
         const response = await apiClient.get("/projects.json");
         const projects = response.data || [];
@@ -67,12 +74,19 @@ async function getProjects() {
                 now - createdAt <= FIVE_YEARS_MS &&
                 now - updatedAt <= ONE_YEAR_MS
             );
-        })
+        });
         return clientProjects.map((project) => ({
             project_id: project.id,
-            message_board_id: project.dock.find((dock) => dock.name === "message_board")?.id}));
+            message_board_id: project.dock.find(
+                (dock) => dock.name === "message_board"
+            )?.id,
+        }));
     } catch (error) {
-        console.error("Error fetching projects:", error.response?.status, error.response?.data);
+        console.error(
+            "Error fetching projects:",
+            error.response?.status,
+            error.response?.data
+        );
         return [];
     }
 }
@@ -82,14 +96,17 @@ async function getProjects() {
  * @param {Object} project - Project object containing project_id and message_board_id
  * @returns {Array} Array of messages
  */
-async function getMessages(project) {
+async function fetchMessages(project) {
     try {
         const response = await apiClient.get(
             `/buckets/${project.project_id}/message_boards/${project.message_board_id}/messages.json`
         );
         return response.data || [];
     } catch (error) {
-        console.error(`Error fetching messages for project ${project.project_id}:`, error.message);
+        console.error(
+            `Error fetching messages for project ${project.project_id}:`,
+            error.message
+        );
         return [];
     }
 }
@@ -100,12 +117,17 @@ async function getMessages(project) {
  * @param {number} messageId - ID of the message
  * @returns {Object|null} Latest comment or null if none found
  */
-async function getLatestComment(projectId, messageId) {
+async function fetchLatestComment(projectId, messageId) {
     try {
-        const response = await apiClient.get(`/buckets/${projectId}/recordings/${messageId}/comments.json`);
+        const response = await apiClient.get(
+            `/buckets/${projectId}/recordings/${messageId}/comments.json`
+        );
         return response.data?.slice(-1)[0] || null;
     } catch (error) {
-        console.error(`Error fetching latest comment for message ${messageId}:`, error.message);
+        console.error(
+            `Error fetching latest comment for message ${messageId}:`,
+            error.message
+        );
         return null;
     }
 }
@@ -125,53 +147,12 @@ function isClientContent(content) {
  * @param {string} contentType - Type of content ("message" or "comment")
  * @returns {boolean} True if content is old and unreplied
  */
-function isOldAndUnreplied(content, contentType = "message") {
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+function isOldAndNotReplied(content, contentType = "message") {
+    const sevenDaysAgo = Date.now() - SEVEN_DAYS_MS;
     return (
-        new Date(content.created_at) < sevenDaysAgo &&
+        new Date(content.created_at).getTime() < sevenDaysAgo &&
         (contentType === "message" ? content.comments_count === 0 : true)
     );
-}
-
-/**
- * Checks for unread client messages and comments.
- */
-async function checkClientContent() {
-    const unreadItems = [];
-    const projects = await getProjects();
-
-    for (const project of projects) {
-        const messages = await getMessages(project);
-        for (const message of messages) {
-            if (isClientContent(message) && isOldAndUnreplied(message)) {
-                unreadItems.push({
-                    id: message.id,
-                    type: "Message",
-                    project_id: project.project_id,
-                    message_board_id: project.message_board_id,
-                    subject: message.subject,
-                    url: message.url,
-                    app_url: message.app_url,
-                });
-            }
-
-            const lastComment = await getLatestComment(project.project_id, message.id);
-            if (lastComment && isClientContent(lastComment) && isOldAndUnreplied(lastComment, "comment")) {
-                unreadItems.push({
-                    id: lastComment.id,
-                    type: "Comment",
-                    project_id: project.project_id,
-                    message_board_id: project.message_board_id,
-                    subject: `Comment on: ${message.subject}`,
-                    url: message.url,
-                    app_url: lastComment.app_url,
-                });
-            }
-        }
-    }
-
-    if (unreadItems.length > 0) await sendNotification(unreadItems);
 }
 
 /**
@@ -182,11 +163,13 @@ async function checkClientContent() {
  */
 function shouldNotify(item, notificationHistory) {
     const previousNotification = notificationHistory.find(
-        history => history.item_id === item.id && history.item_type === item.type
+        (history) =>
+            history.item_id === item.id && history.item_type === item.type
     );
     if (!previousNotification) return true;
     const lastNotified = new Date(previousNotification.notified_at);
-    const daysSinceNotification = (Date.now() - lastNotified.getTime()) / (1000 * 60 * 60 * 24);
+    const daysSinceNotification =
+        (Date.now() - lastNotified.getTime()) / (1000 * 60 * 60 * 24);
     return daysSinceNotification >= 7;
 }
 
@@ -194,83 +177,137 @@ function shouldNotify(item, notificationHistory) {
  * Sends notification for unread client messages/comments.
  * @param {Array} contents - Array of unread items to notify about
  */
-async function sendNotification(contents) {
-    const projects = await getProjects();
+async function sendNotifications(contents) {
+    const projects = await fetchClientProjects();
     const notificationHistory = await getNotificationHistory();
 
     // Filter items to only those that should be notified (not recently notified)
-    const itemsToNotify = contents.filter(item => shouldNotify(item, notificationHistory));
+    const itemsToNotify = contents.filter((item) =>
+        shouldNotify(item, notificationHistory)
+    );
 
     if (itemsToNotify.length === 0) {
         console.log("No new items to notify about after filtering recently notified items");
         return;
     }
 
-    console.log(`Found ${itemsToNotify.length} unread client messages/comments.`);
+    console.log(
+        `Notifying about ${itemsToNotify.length} unread messages/comments.`
+    );
 
-    const itemsByProject = itemsToNotify.reduce((acc, content) => {
-        if (!acc[content.project_id]) {
-            acc[content.project_id] = [];
+    const itemsByProject = itemsToNotify.reduce((acc, item) => {
+        if (!acc[item.project_id]) {
+            acc[item.project_id] = [];
         }
-        acc[content.project_id].push(content);
+        acc[item.project_id].push(item);
         return acc;
     }, {});
 
-    for (const [projectId, projectItems] of Object.entries(itemsByProject)) {
+    for (const [projectId, items] of Object.entries(itemsByProject)) {
         const notifyProject = projects.find((project) => project.project_id === parseInt(projectId));
         if (!notifyProject) continue;
+        await postNotification(notifyProject, projectId, items);
+    }
+}
 
-        projectItems.forEach(async (item) => {
-            await saveNotificationHistory(item);
-        });
-
-        const messageContent = projectItems
-            .map((item, i) => `${i + 1}. **[${item.type}]** [${item.subject}](<a href="${item.app_url}">Read</a>)`)
+async function postNotification(notifyProject, projectId, unreadItems) {
+    try {
+        const messageContent = unreadItems
+            .map(
+                (item, i) =>
+                    `${i + 1}. **[${item.type}]** [${item.subject}](<a href="${
+                        item.app_url
+                    }">Read</a>)`
+            )
             .join(" <br/>");
 
-        try {
-            const response = await apiClient.get(
-                `/buckets/${projectId}/message_boards/${notifyProject.message_board_id}/messages.json`
+        const response = await apiClient.get(
+            `/buckets/${projectId}/message_boards/${notifyProject.message_board_id}/messages.json`
+        );
+
+        const existingNotification = response.data.find(
+            (message) =>
+                message.title.includes("Unread Client Messages & Comments Notification") &&
+                message.status === "active"
+        );
+
+        if (existingNotification) {
+            console.log(`Updating existing notification for project ${projectId}...`);
+            await apiClient.post(
+                `/buckets/${projectId}/recordings/${existingNotification.id}/comments.json`,
+                {
+                    content: `🚨 Unread client messages/comments older than 7 days:<br/>${messageContent}`,
+                }
+            );
+        } else {
+            console.log(`Posting new notification for project ${projectId}...`);
+            const { data: createdMessage } = await apiClient.post(
+                `/buckets/${projectId}/message_boards/${notifyProject.message_board_id}/messages.json`,
+                {
+                    subject: "📢 Unread Client Messages & Comments Notification",
+                    status: "active",
+                    content: "",
+                }
             );
 
-            const existingNotification = response.data.find(
-                (message) =>
-                    message.title.includes("Unread Client Messages & Comments Notification") &&
-                    message.status === "active"
+            await apiClient.post(
+                `/buckets/${projectId}/recordings/${createdMessage.id}/comments.json`,
+                {
+                    content: `🚨 Unread client messages/comments older than 7 days:<br/>${messageContent}`,
+                }
             );
-
-            if (existingNotification) {
-                console.log(`Updating existing notification for project ${projectId}...`);
-                await apiClient.post(
-                    `/buckets/${projectId}/recordings/${existingNotification.id}/comments.json`,
-                    {
-                        content: `🚨 Unread client messages/comments older than 7 days:<br/>${messageContent}`,
-                    }
-                );
-            } else {
-                console.log(`Posting new notification for project ${projectId}...`);
-                const { data: createdMessage } = await apiClient.post(
-                    `/buckets/${projectId}/message_boards/${notifyProject.message_board_id}/messages.json`,
-                    {
-                        subject: "📢 Unread Client Messages & Comments Notification",
-                        status: "active",
-                        content: "",
-                    }
-                );
-
-                await apiClient.post(
-                    `/buckets/${projectId}/recordings/${createdMessage.id}/comments.json`,
-                    {
-                        content: `🚨 Unread client messages/comments older than 7 days:<br/>${messageContent}`,
-                    }
-                );
-            }
-
-            console.log(`Notification updated on Basecamp for project ${projectId}!`);
-        } catch (error) {
-            console.error(`Error posting notification for project ${projectId}:`, error.response?.status, error.response?.data);
         }
+
+        console.log(`Notification posted for project ${projectId}.`);
+
+        // Save notification history
+        for (const item of unreadItems) await saveNotificationHistory(item);
+
+    } catch (error) {
+        console.error(
+            `Error posting notification for project ${projectId}:`,
+            error.message
+        );
     }
+}
+
+/**
+ * Checks for unread client messages and comments.
+ */
+async function checkClientContent() {
+    const projects = await fetchClientProjects();
+    const unreadItemsPromises = projects.map(async (project) => {
+        const messages = await fetchMessages(project);
+        const unreadItems = []
+        for (const message of messages){
+            if( isClientContent(message) && isOldAndNotReplied(message)){
+                unreadItems.push({
+                    id: message.id,
+                    type: "Message",
+                    project_id: project.project_id,
+                    message_board_id: project.message_board_id,
+                    subject: message.subject,
+                    url: message.url,
+                    app_url: message.app_url,
+                });
+            }
+            const lastComment = await fetchLatestComment(project.project_id, message.id);
+            if(lastComment && isClientContent(lastComment) && isOldAndNotReplied(lastComment, "comment")){
+                unreadItems.push({
+                    id: lastComment.id,
+                    type: "Comment",
+                    subject: `Comment on: ${message.subject}`,
+                    app_url: lastComment.app_url,
+                    project_id: project.project_id,
+                });
+            }
+        }
+        return unreadItems;
+    })
+
+    const unreadItems = (await Promise.all(unreadItemsPromises)).flat();
+
+    if (unreadItems.length > 0) await sendNotifications(unreadItems);
 }
 
 // Main execution
