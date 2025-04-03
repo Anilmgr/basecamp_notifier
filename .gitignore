@@ -140,3 +140,5 @@ backups
 # sqlite files
 *.sqlite
 *.db
+
+.DS_Store
