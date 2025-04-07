@@ -1,5 +1,5 @@
 {
-  "name": "basecamp_oauth2",
+  "name": "basecamp_notifier",
   "version": "1.0.0",
   "main": "index.js",
   "type": "module",

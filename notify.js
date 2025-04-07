@@ -210,6 +210,12 @@ async function sendNotifications(contents) {
     }
 }
 
+/** 
+ * Posts a notification for unread items in a project.
+ * @param {Object} notifyProject - The project details to notify about.
+ * @param {number} projectId - The ID of the project.
+ * @param {Array} unreadItems - Array of unread items to include in the notification.
+ */
 async function postNotification(notifyProject, projectId, unreadItems) {
     try {
         const messageContent = unreadItems
